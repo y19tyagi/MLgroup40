@@ -19,7 +19,6 @@ class FrozenLakeAgent:
     def __init__(self):
         # Create environment
         self.env = gym.make("FrozenLake-v1",map_name="8x8", is_slippery=True,  render_mode='human') # change grid 
-        # self.env = gym.make('FrozenLake-v1', map_name="8x8", is_slippery= False, render_mode='human')
         
         # Create table for storing rewards
         self.rewards_table = np.zeros((64, 8))  # 16 states, 4 actions || change based on grid
@@ -28,7 +27,7 @@ class FrozenLakeAgent:
         self.learn_rate = 0.1
         self.discount = 0.95
         self.explore_chance = 0.3
-        # self.reward = 0.01
+        # self.reward = -0.1
         
         # Training settings
         self.num_episodes = 2000  #1000
@@ -41,11 +40,14 @@ class FrozenLakeAgent:
     
     def learn(self):
         print("Starting training...")
-        
+        # reward = 0
         for episode in range(self.num_episodes):
             state = self.env.reset()[0]
 
             for step in range(self.max_steps):
+                
+                # if reward == 0:
+                #     reward = -0.01  # Penalize each step to encourage faster solutions
     
                 action = self.get_action(state) # choose action 
                 new_state, reward, done, _, _ = self.env.step(action)
@@ -55,7 +57,7 @@ class FrozenLakeAgent:
                 next_max = np.max(self.rewards_table[new_state])
                 
                 # Q-learning update
-                new_value = old_value + self.learn_rate * (reward + self.discount * next_max - old_value)
+                new_value = old_value + self.learn_rate * (reward + self.discount * next_max - old_value) # ***
                 self.rewards_table[state, action] = new_value
                 
                 state = new_state
