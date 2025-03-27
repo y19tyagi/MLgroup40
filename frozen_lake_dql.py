@@ -6,7 +6,7 @@ import random
 import torch
 from torch import nn
 import torch.nn.functional as F
-from gym.envs.toy_text.frozen_lake import generate_random_map
+from gymnasium.envs.toy_text.frozen_lake import generate_random_map
 
 class DQN(nn.Module):
 
