@@ -6,7 +6,9 @@ import random
 import torch
 from torch import nn
 import torch.nn.functional as F
-from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+from gym.envs.toy_text.frozen_lake import generate_random_map
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DQN(nn.Module):
     def __init__(self, in_states, h1_nodes, out_actions):
@@ -185,5 +187,5 @@ class FrozenLakeDQL():
 
 if __name__ == '__main__':
     frozen_lake = FrozenLakeDQL()
-    frozen_lake.train(5000, is_slippery=False)
+    frozen_lake.train(5000, is_slippery=False)  
     frozen_lake.test(100, is_slippery=False)
