@@ -51,6 +51,7 @@ class FrozenLakeDQL():
         self.policy_dqn = None                      # Main policy network
 
     def train(self, episodes, render=False, is_slippery=False):
+        print("Initializing training...")
         num_states = 2  # Using normalized coordinates (row, col) instead of one-hot
         num_actions = 4
 
@@ -64,10 +65,12 @@ class FrozenLakeDQL():
         self.optimizer = torch.optim.AdamW(policy_dqn.parameters(), 
                                          lr=self.learning_rate_a)
         
+        print("Starting training loop...")
         # Training state tracking
         memory = ReplayMemory(self.replay_memory_size)
         epsilon = 1.0  # Exploration rate
         step_count = 0  # Total steps counter
+        total_rewards = 0  # Track rewards for reporting
 
         for episode in range(episodes):
             # Create new random map for each episode
@@ -97,21 +100,29 @@ class FrozenLakeDQL():
                 # Training step when enough experiences
                 if len(memory) > self.mini_batch_size:
                     mini_batch = memory.sample(self.mini_batch_size)
-                    self.optimize(mini_batch, policy_dqn, target_dqn)
+                    loss = self.optimize(mini_batch, policy_dqn, target_dqn)
 
                     # Decay exploration rate exponentially
                     epsilon = max(epsilon * 0.995, 0.01)
 
                     # Sync target network periodically
                     if step_count % self.network_sync_rate == 0:
+                        print(f"Syncing target network at step {step_count}")
                         target_dqn.load_state_dict(policy_dqn.state_dict())
 
-            env.close()
+            total_rewards += reward
             
             # Progress reporting
             if (episode+1) % 100 == 0:
-                print(f"Episode {episode+1}/{episodes} | Epsilon: {epsilon:.4f}")
+                avg_reward = total_rewards / 100
+                print(f"Episode {episode+1}/{episodes} | Epsilon: {epsilon:.4f} | "
+                      f"Avg Reward (last 100): {avg_reward:.3f} | "
+                      f"Total Steps: {step_count}")
+                total_rewards = 0
 
+            env.close()
+
+        print(f"Training completed! Total steps: {step_count}")
         # Save trained model
         torch.save(policy_dqn.state_dict(), "frozen_lake_dql.pt")
 
@@ -146,6 +157,8 @@ class FrozenLakeDQL():
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        return loss.item()
 
     def state_to_dqn_input(self, state: int) -> torch.Tensor:
         """Convert state index to normalized grid coordinates"""
