@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from frozen_lake_dql import DQN
-from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+from gym.envs.toy_text.frozen_lake import generate_random_map
 
 def evaluate_frozen_lake_extended(
     dqn_path="frozen_lake_dql.pt",
@@ -15,7 +15,6 @@ def evaluate_frozen_lake_extended(
     Returns a dictionary with per-episode metrics and overall averages.
     Additionally calculates average steps only among successful episodes.
     """
-
     success_list = []
     steps_list = []
     rewards_list = []
@@ -25,13 +24,14 @@ def evaluate_frozen_lake_extended(
     states = 16
     actions = 4
 
+    # Load the trained DQN model
     policy_dqn = DQN(in_states=states, h1_nodes=states, out_actions=actions)
     policy_dqn.load_state_dict(torch.load(dqn_path))
     policy_dqn.eval()
 
     for _ in range(episodes):
-        random_map = generate_random_map(size=4, p=0.8)
-        env = gym.make('FrozenLake-v1', desc=random_map, is_slippery=is_slippery, render_mode=None)
+        env = gym.make('FrozenLake-v1', desc=generate_random_map(size=4),
+                       is_slippery=is_slippery, render_mode=None)
         state, _ = env.reset()
         terminated = False
         truncated = False
@@ -39,7 +39,7 @@ def evaluate_frozen_lake_extended(
         episode_reward = 0.0
 
         while not (terminated or truncated):
-            # One-hot representation of the state
+            # One-hot encode the state
             state_tensor = torch.zeros(states).unsqueeze(0)
             state_tensor[0, state] = 1.0
 
@@ -51,7 +51,7 @@ def evaluate_frozen_lake_extended(
             episode_reward += reward
             episode_steps += 1
 
-        # A reward of 1 means success (goal reached)
+        # Determine success based on reward (1 means goal reached)
         success = 1 if reward == 1.0 else 0
         success_list.append(success)
         steps_list.append(episode_steps)
@@ -67,10 +67,8 @@ def evaluate_frozen_lake_extended(
     overall_success_rate = np.mean(success_list)
     overall_avg_steps = np.mean(steps_list)
     overall_avg_reward = np.mean(rewards_list)
-
-    # New metrics: average steps in successful episodes vs. failed episodes
-    avg_steps_success = np.mean(steps_when_successful) if len(steps_when_successful) > 0 else float('nan')
-    avg_steps_failed = np.mean(steps_when_failed) if len(steps_when_failed) > 0 else float('nan')
+    avg_steps_success = np.mean(steps_when_successful) if steps_when_successful else float('nan')
+    avg_steps_failed = np.mean(steps_when_failed) if steps_when_failed else float('nan')
 
     print(f"Evaluation over {episodes} episodes:")
     print(f"  Success Rate: {overall_success_rate:.2f}")
@@ -79,11 +77,7 @@ def evaluate_frozen_lake_extended(
     print(f"  Average Steps (only successful episodes): {avg_steps_success:.2f}")
     print(f"  Average Steps (only failed episodes): {avg_steps_failed:.2f}")
 
-    # Return all stats for further use (e.g., plotting)
     return {
-        "success_list": success_list,
-        "steps_list": steps_list,
-        "rewards_list": rewards_list,
         "overall_success_rate": overall_success_rate,
         "overall_avg_steps": overall_avg_steps,
         "overall_avg_reward": overall_avg_reward,
@@ -92,11 +86,70 @@ def evaluate_frozen_lake_extended(
     }
 
 if __name__ == "__main__":
-    metrics = evaluate_frozen_lake_extended(dqn_path="frozen_lake_dql.pt", episodes=100, is_slippery=False)
+    num_evaluations = 50
 
-    # Example: plot success_list
-    plt.plot(metrics["success_list"], 'o')
-    plt.title("Success (1=goal) over episodes")
-    plt.xlabel("Episode")
-    plt.ylabel("Success")
+    # Lists to store metrics for each evaluation
+    evaluation_success_rates = []
+    evaluation_avg_steps = []
+    evaluation_avg_rewards = []
+    evaluation_avg_steps_success = []
+    evaluation_avg_steps_failed = []
+
+    # Loop over 50 evaluations
+    for i in range(num_evaluations):
+        print(f"Running evaluation {i+1}/{num_evaluations}")
+        metrics = evaluate_frozen_lake_extended(dqn_path="frozen_lake_dql.pt",
+                                                  episodes=1000,
+                                                  is_slippery=False)
+        evaluation_success_rates.append(metrics["overall_success_rate"])
+        evaluation_avg_steps.append(metrics["overall_avg_steps"])
+        evaluation_avg_rewards.append(metrics["overall_avg_reward"])
+        evaluation_avg_steps_success.append(metrics["avg_steps_success"])
+        evaluation_avg_steps_failed.append(metrics["avg_steps_failed"])
+
+    evaluations = np.arange(1, num_evaluations + 1)
+
+    # Plot Success Rate over evaluations
+    plt.figure()
+    plt.plot(evaluations, evaluation_success_rates, marker='o', linestyle='-')
+    plt.title("Success Rate Over Evaluations")
+    plt.xlabel("Evaluation")
+    plt.ylabel("Success Rate")
+    plt.grid(True)
+    plt.show()
+
+    # Plot Average Steps (all episodes) over evaluations
+    plt.figure()
+    plt.plot(evaluations, evaluation_avg_steps, marker='o', linestyle='-')
+    plt.title("Average Steps (All Episodes) Over Evaluations")
+    plt.xlabel("Evaluation")
+    plt.ylabel("Average Steps")
+    plt.grid(True)
+    plt.show()
+
+    # Plot Average Reward (all episodes) over evaluations
+    plt.figure()
+    plt.plot(evaluations, evaluation_avg_rewards, marker='o', linestyle='-')
+    plt.title("Average Reward (All Episodes) Over Evaluations")
+    plt.xlabel("Evaluation")
+    plt.ylabel("Average Reward")
+    plt.grid(True)
+    plt.show()
+
+    # Plot Average Steps (successful episodes) over evaluations
+    plt.figure()
+    plt.plot(evaluations, evaluation_avg_steps_success, marker='o', linestyle='-')
+    plt.title("Average Steps (Successful Episodes) Over Evaluations")
+    plt.xlabel("Evaluation")
+    plt.ylabel("Average Steps (Success)")
+    plt.grid(True)
+    plt.show()
+
+    # Plot Average Steps (failed episodes) over evaluations
+    plt.figure()
+    plt.plot(evaluations, evaluation_avg_steps_failed, marker='o', linestyle='-')
+    plt.title("Average Steps (Failed Episodes) Over Evaluations")
+    plt.xlabel("Evaluation")
+    plt.ylabel("Average Steps (Failed)")
+    plt.grid(True)
     plt.show()
