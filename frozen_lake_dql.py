@@ -13,6 +13,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class DQN(nn.Module):
     def __init__(self, in_states, h1_nodes, out_actions):
         super().__init__()
+
         # Network architecture with two hidden layers
         self.fc1 = nn.Linear(in_states, h1_nodes)   # First fully connected layer
         self.fc2 = nn.Linear(h1_nodes, h1_nodes)    # Second fully connected layer
@@ -44,37 +45,38 @@ class FrozenLakeDQL():
     def __init__(self, learning_rate_a=0.001, discount_factor_g=0.95,
                  network_sync_rate=1000, replay_memory_size=10000, 
                  mini_batch_size=128):
-        # Hyperparameter configuration
-        self.learning_rate_a = learning_rate_a      # Learning rate (increased from 0.0001)
-        self.discount_factor_g = discount_factor_g  # Discount factor
-        self.network_sync_rate = network_sync_rate  # Target network sync interval
+ 
+        self.learning_rate_a = learning_rate_a        # Learning rate (increased from 0.0001)
+        self.discount_factor_g = discount_factor_g    # Discount factor
+        self.network_sync_rate = network_sync_rate    # Target network sync interval
         self.replay_memory_size = replay_memory_size  # Replay buffer size
-        self.mini_batch_size = mini_batch_size      # Training batch size
-        self.policy_dqn = None                      # Main policy network
+        self.mini_batch_size = mini_batch_size        # Training batch size
+        self.policy_dqn = None                        # Main policy network
 
     def train(self, episodes, render=False, is_slippery=False):
         print("Initializing training...")
-        num_states = 2  # Using normalized coordinates (row, col) instead of one-hot
+        num_states = 2  # Using normalized coordinates (row, col) instead of one-hot encoding
         num_actions = 4
 
-        # Initialize policy and target networks
+        # Policy and target networks 
         policy_dqn = DQN(in_states=num_states, h1_nodes=16, out_actions=num_actions)
         target_dqn = DQN(in_states=num_states, h1_nodes=16, out_actions=num_actions)
-        target_dqn.load_state_dict(policy_dqn.state_dict())  # Sync networks
+        target_dqn.load_state_dict(policy_dqn.state_dict())  #COmbining the two networks 
         self.policy_dqn = policy_dqn
 
-        # AdamW optimizer with learning rate
+        # AdamW optimizer with its learning rate as a hyperparameter
         self.optimizer = torch.optim.AdamW(policy_dqn.parameters(), 
                                          lr=self.learning_rate_a)
         
         print("Starting training loop...")
-        # Training state tracking
+
         memory = ReplayMemory(self.replay_memory_size)
-        epsilon = 1.0  # Exploration rate
-        step_count = 0  # Total steps counter
-        total_rewards = 0  # Track rewards for reporting
+        epsilon = 1.0         # Exploration rate
+        step_count = 0        # Total steps counter
+        total_rewards = 0     # Track rewards for reporting
 
         for episode in range(episodes):
+
             # Create new random map for each episode
             env = gym.make('FrozenLake-v1', 
                           desc=generate_random_map(size=4),
@@ -84,37 +86,33 @@ class FrozenLakeDQL():
             terminated = truncated = False
 
             while not (terminated or truncated):
-                # Epsilon-greedy action selection
+
                 if random.random() < epsilon:
-                    action = env.action_space.sample()  # Random action
+                    action = env.action_space.sample()  
                 else:
                     with torch.no_grad():
+
                         # Greedy action from policy network
                         state_tensor = self.state_to_dqn_input(state)
                         action = policy_dqn(state_tensor).argmax().item()
-
-                # Environment interaction
                 new_state, reward, terminated, truncated, _ = env.step(action)
                 memory.append((state, action, new_state, reward, terminated))
                 state = new_state
                 step_count += 1
 
-                # Training step when enough experiences
+                # Training step when enough experiences is aquired 
                 if len(memory) > self.mini_batch_size:
                     mini_batch = memory.sample(self.mini_batch_size)
                     loss = self.optimize(mini_batch, policy_dqn, target_dqn)
 
-                    # Decay exploration rate exponentially
                     epsilon = max(epsilon * 0.995, 0.01)
 
-                    # Sync target network periodically
                     if step_count % self.network_sync_rate == 0:
                         print(f"Syncing target network at step {step_count}")
                         target_dqn.load_state_dict(policy_dqn.state_dict())
 
             total_rewards += reward
             
-            # Progress reporting
             if (episode+1) % 100 == 0:
                 avg_reward = total_rewards / 100
                 print(f"Episode {episode+1}/{episodes} | Epsilon: {epsilon:.4f} | "
@@ -137,18 +135,18 @@ class FrozenLakeDQL():
                 if terminated:
                     target = torch.tensor([reward], dtype=torch.float32)
                 else:
-                    # Calculate target Q-value with target network
+                    # Calculating target Q-value with target network
                     new_state_input = self.state_to_dqn_input(new_state)
                     target = reward + self.discount_factor_g * \
                            target_dqn(new_state_input).max().item()
                     target = torch.tensor([target], dtype=torch.float32)
 
-                # Get current Q-values and modify the target for chosen action
+                # It gives us the current q-values and modify the target for chosen action
                 state_input = self.state_to_dqn_input(state)
                 target_q = target_dqn(state_input).detach().clone()  # Critical detach
                 target_q[0, action] = target
 
-            # Get policy network's Q-value prediction
+            # Using the current policy network's Q-value prediction
             current_q = policy_dqn(state_input)
             
             current_q_list.append(current_q)
@@ -163,40 +161,46 @@ class FrozenLakeDQL():
         return loss.item()
 
     def state_to_dqn_input(self, state: int) -> torch.Tensor:
-        """Convert state index to normalized grid coordinates"""
-        grid_size = 4  # 4x4 grid
+        grid_size = 4
         row = state // grid_size
         col = state % grid_size
-        # Normalize coordinates to [0, 1] range
-        return torch.tensor([[row/(grid_size-1), col/(grid_size-1)]], 
-                          dtype=torch.float32)
+
+        # Calculate goal direction
+        goal_row = 3
+        goal_col = 3
+        row_diff = (goal_row - row)/3
+        col_diff = (goal_col - col)/3
+
+        return torch.tensor([
+            [row/3, col/3, 
+            row_diff, col_diff]
+        ], dtype=torch.float32)
 
     def test(self, episodes, is_slippery=False):
-        """Evaluate trained agent on new random maps"""
+
         if self.policy_dqn is None:
-            self.policy_dqn = DQN(2, 16, 4)  # Match input dimensions
+            self.policy_dqn = DQN(2, 16, 4)
             self.policy_dqn.load_state_dict(torch.load("frozen_lake_dql.pt"))
-        self.policy_dqn.eval()
+        self.policy_dqn.eval()  # Set to testing mode
         
-        success_count = 0
+        wins = 0
         for _ in range(episodes):
             env = gym.make('FrozenLake-v1', 
                           desc=generate_random_map(size=4),
                           is_slippery=is_slippery)
             state = env.reset()[0]
-            terminated = truncated = False
+            done = False
             
-            while not (terminated or truncated):
-                with torch.no_grad():
-                    state_tensor = self.state_to_dqn_input(state)
-                    action = self.policy_dqn(state_tensor).argmax().item()
-                state, reward, terminated, truncated, _ = env.step(action)
+            while not done:
+                state_tensor = self.state_to_dqn_input(state)
+                action = self.policy_dqn(state_tensor).argmax().item()
+                state, reward, done, _, _ = env.step(action)
             
-            if terminated and reward == 1:
-                success_count += 1
+            if reward == 1:
+                wins += 1
             env.close()
         
-        print(f"Success rate: {success_count/episodes*100:.2f}%")
+        print(f"Success rate: {(wins/episodes)*100:.1f}%")
 
 if __name__ == '__main__':
     frozen_lake = FrozenLakeDQL()
