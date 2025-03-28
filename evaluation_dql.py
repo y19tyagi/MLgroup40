@@ -3,15 +3,22 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from frozen_lake_dql import DQN
-from gym.envs.toy_text.frozen_lake import generate_random_map
+from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+import os
+from datetime import datetime
 
-def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slippery=False):
+def ensure_results_dir():
+    """Create a results directory if it doesn't exist"""
+    if not os.path.exists('results'):
+        os.makedirs('results')
+
+def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slippery=True):
     """
     Tests our trained AI agent on new FrozenLake maps
     Returns performance statistics
     """
     # Creating the brain with the same structure used in training
-    ai_brain = DQN(in_states=2, h1_nodes=16, out_actions=4)
+    ai_brain = DQN(in_states=4, h1_nodes=16, out_actions=4)
     ai_brain.load_state_dict(torch.load(dqn_path))
     ai_brain.eval()  # Put brain in evaluation mode
 
@@ -20,10 +27,17 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         'steps': [],
         'rewards': [],
         'success_steps': [],
-        'fail_steps': []
+        'fail_steps': [],
+        'exploration_rates': [],
+        'episode_rewards': []
     }
 
-    for _ in range(episodes):
+    # Initialize exploration rate
+    epsilon = 1.0
+    epsilon_decay = 0.995
+    min_epsilon = 0.01
+
+    for episode in range(episodes):
         # Create new random map
         game_world = gym.make('FrozenLake-v1', 
                              desc=generate_random_map(size=4),
@@ -34,14 +48,25 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         total_reward = 0
 
         while not game_over:
-           
+            # Calculate state features
             row = current_position // 4  # Map position to grid row
             col = current_position % 4   # Map position to grid column
-            state_tensor = torch.tensor([[row/3, col/3]], dtype=torch.float32)
+            
+            # Calculate goal direction
+            goal_row = 3
+            goal_col = 3
+            row_diff = (goal_row - row)/3
+            col_diff = (goal_col - col)/3
+            
+            # Create state tensor with all 4 features
+            state_tensor = torch.tensor([[row/3, col/3, row_diff, col_diff]], dtype=torch.float32)
 
-            # Ask AI for action
+            # Ask AI for action with exploration
             with torch.no_grad():
-                action = ai_brain(state_tensor).argmax().item()
+                if np.random.random() < epsilon:
+                    action = game_world.action_space.sample()
+                else:
+                    action = ai_brain(state_tensor).argmax().item()
 
             # Take action in the game world
             new_position, reward, terminated, truncated, _ = game_world.step(action)
@@ -52,11 +77,16 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
             steps += 1
             total_reward += reward
 
+        # Decay exploration rate
+        epsilon = max(min_epsilon, epsilon * epsilon_decay)
+
         # Recording the results 
         won = 1 if reward == 1 else 0
         results['successes'].append(won)
         results['steps'].append(steps)
         results['rewards'].append(total_reward)
+        results['exploration_rates'].append(epsilon)
+        results['episode_rewards'].append(total_reward)
         
         if won:
             results['success_steps'].append(steps)
@@ -70,7 +100,11 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         'avg_steps': np.mean(results['steps']),
         'avg_reward': np.mean(results['rewards']),
         'avg_success_steps': np.mean(results['success_steps']) if results['success_steps'] else 0,
-        'avg_fail_steps': np.mean(results['fail_steps']) if results['fail_steps'] else 0
+        'avg_fail_steps': np.mean(results['fail_steps']) if results['fail_steps'] else 0,
+        'exploration_rates': results['exploration_rates'],
+        'episode_rewards': results['episode_rewards'],
+        'steps': results['steps'],
+        'successes': results['successes']
     }
 
     print("\nTest Results:")
@@ -81,40 +115,61 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
     
     return stats
 
-if __name__ == "__main__":
-
-    num_tests = 50
-    test_history = {
-        'success_rates': [],
-        'all_steps': [],
-        'success_steps': [],
-        'fail_steps': []
-    }
-
-    print(f"Running {num_tests} tests...")
-    for test_num in range(num_tests):
-        print(f"Test {test_num+1}/{num_tests}")
-        test_results = evaluate_frozen_lake(episodes=1000)
-        
-        test_history['success_rates'].append(test_results['success_rate'])
-        test_history['all_steps'].append(test_results['avg_steps'])
-        test_history['success_steps'].append(test_results['avg_success_steps'])
-        test_history['fail_steps'].append(test_results['avg_fail_steps'])
-
-    test_numbers = np.arange(1, num_tests+1)
+def plot_training_metrics(stats):
+    """Plot all training metrics in a single figure"""
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
-    plt.figure(figsize=(10,6))
-    plt.plot(test_numbers, test_history['success_rates'], 'b-')
-    plt.title("Success Rate Progress")
-    plt.xlabel("Test Number")
-    plt.ylabel("Success Rate")
-    plt.grid(True)
+    # Plot 1: Success Rate
+    success_rate = np.cumsum(stats['successes']) / np.arange(1, len(stats['successes']) + 1) * 100
+    ax1.plot(success_rate, 'b-')
+    ax1.set_title('Success Rate Over Time')
+    ax1.set_xlabel('Episode')
+    ax1.set_ylabel('Success Rate (%)')
+    ax1.grid(True)
+    ax1.set_ylim(0, 100)
+    
+    # Plot 2: Exploration Rate
+    ax2.plot(stats['exploration_rates'], 'r-')
+    ax2.set_title('Exploration Rate Decay')
+    ax2.set_xlabel('Episode')
+    ax2.set_ylabel('Epsilon')
+    ax2.grid(True)
+    ax2.set_ylim(0, 1)
+    
+    # Plot 3: Episode Rewards
+    ax3.plot(stats['episode_rewards'], 'g-')
+    ax3.set_title('Episode Rewards')
+    ax3.set_xlabel('Episode')
+    ax3.set_ylabel('Reward')
+    ax3.grid(True)
+    
+    # Plot 4: Steps per Episode
+    ax4.plot(stats['steps'], 'm-')
+    ax4.set_title('Steps per Episode')
+    ax4.set_xlabel('Episode')
+    ax4.set_ylabel('Steps')
+    ax4.grid(True)
+    
+    plt.tight_layout()
+    
+    # Create timestamp for unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f'results/dql_training_metrics_{timestamp}.png'
+    
+    # Save the plot
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
+    
+    return filename
 
-    plt.figure(figsize=(10,6))
-    plt.plot(test_numbers, test_history['all_steps'], 'g-')
-    plt.title("Average Steps Per Test")
-    plt.xlabel("Test Number")
-    plt.ylabel("Steps")
-    plt.grid(True)
-    plt.show()
+if __name__ == "__main__":
+    # Create results directory
+    ensure_results_dir()
+    
+    print("Running evaluation...")
+    test_results = evaluate_frozen_lake(episodes=1000)
+    
+    # Plot all metrics
+    print("\nGenerating plots...")
+    saved_file = plot_training_metrics(test_results)
+    print(f"Plots saved as '{saved_file}'")
