@@ -12,9 +12,69 @@ def ensure_results_dir():
     if not os.path.exists('results'):
         os.makedirs('results')
 
-def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slippery=True):
+def plot_test_metrics(all_results):
+    """Plot test metrics for all runs"""
+    plt.figure(figsize=(15, 10))
+    
+    colors = ['b', 'r', 'g']
+    
+    # Plot 1: Win Rate Over Time
+    plt.subplot(2, 2, 1)
+    for i, results in enumerate(all_results):
+        win_rates = np.cumsum(results['successes']) / np.arange(1, len(results['successes']) + 1) * 100
+        plt.plot(win_rates, f'{colors[i]}-', label=f'Run {i+1}')
+    plt.title('Win Rate Over Time')
+    plt.xlabel('Episodes')
+    plt.ylabel('Win Rate (%)')
+    plt.grid(True)
+    plt.legend()
+    
+    # Plot 2: Episode Rewards
+    plt.subplot(2, 2, 2)
+    for i, results in enumerate(all_results):
+        plt.plot(results['episode_rewards'], f'{colors[i]}-', label=f'Run {i+1}')
+    plt.title('Episode Rewards')
+    plt.xlabel('Episodes')
+    plt.ylabel('Reward')
+    plt.grid(True)
+    plt.legend()
+    
+    # Plot 3: Steps per Episode
+    plt.subplot(2, 2, 3)
+    for i, results in enumerate(all_results):
+        plt.plot(results['steps'], f'{colors[i]}-', label=f'Run {i+1}')
+    plt.title('Steps per Episode')
+    plt.xlabel('Episodes')
+    plt.ylabel('Steps')
+    plt.grid(True)
+    plt.legend()
+    
+    # Plot 4: Moving Average Win Rate
+    plt.subplot(2, 2, 4)
+    window = 100
+    for i, results in enumerate(all_results):
+        win_rates = np.array(results['successes']) * 100
+        moving_avg = np.convolve(win_rates, np.ones(window)/window, mode='valid')
+        plt.plot(moving_avg, f'{colors[i]}-', label=f'Run {i+1}')
+    plt.title(f'Moving Average Win Rate (window={window})')
+    plt.xlabel('Episodes')
+    plt.ylabel('Win Rate (%)')
+    plt.grid(True)
+    plt.legend()
+    
+    plt.tight_layout()
+    
+    # Save the plot with timestamp and win rate
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    win_rate = np.mean([np.mean(r['successes']) for r in all_results]) * 100
+    filename = f'results/dql_test_{win_rate:.1f}percent_{timestamp}.png'
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"\nTest results plot saved as '{filename}'")
+
+def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=1000, num_runs=3, is_slippery=True):
     """
-    Tests our trained AI agent on new FrozenLake maps
+    Tests our trained AI agent on the same map it was trained on
     Returns performance statistics
     """
     print("Loading model...")
@@ -23,170 +83,126 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
     ai_brain.load_state_dict(torch.load(dqn_path, weights_only=True))
     ai_brain.eval()
 
-    results = {
-        'successes': [],
-        'steps': [],
-        'rewards': [],
-        'success_steps': [],
-        'fail_steps': [],
-        'exploration_rates': [],
-        'episode_rewards': []
-    }
-
-    # Initialize exploration rate
-    epsilon = 1.0
-    epsilon_decay = 0.995
-    min_epsilon = 0.01
+    all_results = []
 
     # Pre-calculate state tensors for all possible positions
     print("Pre-calculating state tensors...")
     state_tensors = {}
-    for state in range(16):  # 4x4 grid
-        row = state // 4
-        col = state % 4
-        goal_row = 3
-        goal_col = 3
-        row_diff = (goal_row - row)/3
-        col_diff = (goal_col - col)/3
-        state_tensors[state] = torch.tensor([[row/3, col/3, row_diff, col_diff]], dtype=torch.float32)
+    for state in range(64):  # 8x8 grid
+        row = state // 8
+        col = state % 8
+        goal_row = 7
+        goal_col = 7
+        row_diff = (goal_row - row)/7
+        col_diff = (goal_col - col)/7
+        state_tensors[state] = torch.tensor([[row/7, col/7, row_diff, col_diff]], dtype=torch.float32)
 
-    # Generate all maps at once
-    print("Generating maps...")
-    maps = [generate_random_map(size=4) for _ in range(episodes)]
+    for run in range(num_runs):
+        print(f"\nStarting test run {run + 1}/{num_runs}...")
+        
+        # Create environment with the same 8x8 map used in training
+        game_world = gym.make('FrozenLake-v1', map_name="8x8", is_slippery=is_slippery)
+        
+        results = {
+            'successes': [],
+            'steps': [],
+            'rewards': [],
+            'success_steps': [],
+            'fail_steps': [],
+            'episode_rewards': []
+        }
 
-    print("Starting evaluation...")
-    for episode in range(episodes):
-        # Create environment with pre-generated map
-        game_world = gym.make('FrozenLake-v1', 
-                             desc=maps[episode],
-                             is_slippery=is_slippery)
-        current_position, _ = game_world.reset()
-        game_over = False
-        steps = 0
-        total_reward = 0
+        for episode in range(episodes):
+            current_position, _ = game_world.reset()
+            game_over = False
+            steps = 0
+            total_reward = 0
 
-        while not game_over:
-            # Use pre-calculated state tensor
-            state_tensor = state_tensors[current_position]
+            while not game_over:
+                # Use pre-calculated state tensor
+                state_tensor = state_tensors[current_position]
 
-            # Ask AI for action with exploration
-            with torch.no_grad():
-                if np.random.random() < epsilon:
-                    action = game_world.action_space.sample()
-                else:
+                # Ask AI for action (no exploration during testing)
+                with torch.no_grad():
                     action = ai_brain(state_tensor).argmax().item()
 
-            # Take action in the game world
-            new_position, reward, terminated, truncated, _ = game_world.step(action)
-            game_over = terminated or truncated
+                # Take action in the game world
+                new_position, reward, terminated, truncated, _ = game_world.step(action)
+                game_over = terminated or truncated
+                
+                # Update tracking
+                current_position = new_position
+                steps += 1
+                total_reward += reward
+
+            # Recording the results 
+            won = 1 if reward == 1 else 0
+            results['successes'].append(won)
+            results['steps'].append(steps)
+            results['rewards'].append(total_reward)
+            results['episode_rewards'].append(total_reward)
             
-            # Update tracking
-            current_position = new_position
-            steps += 1
-            total_reward += reward
+            if won:
+                results['success_steps'].append(steps)
+            else:
+                results['fail_steps'].append(steps)
 
-        # Decay exploration rate
-        epsilon = max(min_epsilon, epsilon * epsilon_decay)
-
-        # Recording the results 
-        won = 1 if reward == 1 else 0
-        results['successes'].append(won)
-        results['steps'].append(steps)
-        results['rewards'].append(total_reward)
-        results['exploration_rates'].append(epsilon)
-        results['episode_rewards'].append(total_reward)
-        
-        if won:
-            results['success_steps'].append(steps)
-        else:
-            results['fail_steps'].append(steps)
+            # Print progress every 100 episodes
+            if (episode + 1) % 100 == 0:
+                current_win_rate = np.mean(results['successes'][-100:]) * 100
+                print(f"\nEpisodes {episode-99}-{episode+1}:")
+                print(f"Win Rate: {current_win_rate:.1f}%")
+                print(f"Average Steps: {np.mean(results['steps'][-100:]):.1f}")
         
         game_world.close()
+        all_results.append(results)
+        
+        # Print results for this run
+        stats = {
+            'success_rate': np.mean(results['successes']),
+            'avg_steps': np.mean(results['steps']),
+            'avg_reward': np.mean(results['rewards']),
+            'avg_success_steps': np.mean(results['success_steps']) if results['success_steps'] else 0,
+            'avg_fail_steps': np.mean(results['fail_steps']) if results['fail_steps'] else 0,
+            'episode_rewards': results['episode_rewards'],
+            'steps': results['steps'],
+            'successes': results['successes']
+        }
+        
+        print(f"\nTest Run {run + 1} Results:")
+        print(f"Win Rate: {stats['success_rate']*100:.1f}%")
+        print(f"Average Steps: {stats['avg_steps']:.1f}")
+        print(f"Successful Paths: {stats['avg_success_steps']:.1f} steps")
+        print(f"Failed Paths: {stats['avg_fail_steps']:.1f} steps")
 
-        # Print progress every 1000 episodes
-        if (episode + 1) % 1000 == 0:
-            current_success_rate = np.mean(results['successes'][-1000:]) * 100
-            print(f"\nEpisodes {episode-999}-{episode+1}:")
-            print(f"Success Rate: {current_success_rate:.1f}%")
-            print(f"Average Steps: {np.mean(results['steps'][-1000:]):.1f}")
-            print(f"Exploration Rate: {epsilon:.3f}")
-
-    stats = {
-        'success_rate': np.mean(results['successes']),
-        'avg_steps': np.mean(results['steps']),
-        'avg_reward': np.mean(results['rewards']),
-        'avg_success_steps': np.mean(results['success_steps']) if results['success_steps'] else 0,
-        'avg_fail_steps': np.mean(results['fail_steps']) if results['fail_steps'] else 0,
-        'exploration_rates': results['exploration_rates'],
-        'episode_rewards': results['episode_rewards'],
-        'steps': results['steps'],
-        'successes': results['successes']
+    # Calculate averages across all runs
+    avg_stats = {
+        'success_rate': np.mean([np.mean(r['successes']) for r in all_results]),
+        'avg_steps': np.mean([np.mean(r['steps']) for r in all_results]),
+        'avg_reward': np.mean([np.mean(r['rewards']) for r in all_results]),
+        'avg_success_steps': np.mean([np.mean(r['success_steps']) if r['success_steps'] else 0 for r in all_results]),
+        'avg_fail_steps': np.mean([np.mean(r['fail_steps']) if r['fail_steps'] else 0 for r in all_results]),
+        'episode_rewards': [r['episode_rewards'] for r in all_results],
+        'steps': [r['steps'] for r in all_results],
+        'successes': [r['successes'] for r in all_results]
     }
 
-    print("\nFinal Test Results:")
-    print(f"Success Rate: {stats['success_rate']*100:.1f}%")
-    print(f"Average Steps: {stats['avg_steps']:.1f}")
-    print(f"Successful Paths: {stats['avg_success_steps']:.1f} steps")
-    print(f"Failed Paths: {stats['avg_fail_steps']:.1f} steps")
+    print("\nOverall Test Results (Averaged across all runs):")
+    print(f"Win Rate: {avg_stats['success_rate']*100:.1f}%")
+    print(f"Average Steps: {avg_stats['avg_steps']:.1f}")
+    print(f"Successful Paths: {avg_stats['avg_success_steps']:.1f} steps")
+    print(f"Failed Paths: {avg_stats['avg_fail_steps']:.1f} steps")
     
-    return stats
-
-def plot_training_metrics(stats):
-    """Plot all training metrics in a single figure"""
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    # Plot the results
+    plot_test_metrics(all_results)
     
-    # Plot 1: Success Rate
-    success_rate = np.cumsum(stats['successes']) / np.arange(1, len(stats['successes']) + 1) * 100
-    ax1.plot(success_rate, 'b-')
-    ax1.set_title('Success Rate Over Time')
-    ax1.set_xlabel('Episode')
-    ax1.set_ylabel('Success Rate (%)')
-    ax1.grid(True)
-    ax1.set_ylim(0, 100)
-    
-    # Plot 2: Exploration Rate
-    ax2.plot(stats['exploration_rates'], 'r-')
-    ax2.set_title('Exploration Rate Decay')
-    ax2.set_xlabel('Episode')
-    ax2.set_ylabel('Epsilon')
-    ax2.grid(True)
-    ax2.set_ylim(0, 1)
-    
-    # Plot 3: Episode Rewards
-    ax3.plot(stats['episode_rewards'], 'g-')
-    ax3.set_title('Episode Rewards')
-    ax3.set_xlabel('Episode')
-    ax3.set_ylabel('Reward')
-    ax3.grid(True)
-    
-    # Plot 4: Steps per Episode
-    ax4.plot(stats['steps'], 'm-')
-    ax4.set_title('Steps per Episode')
-    ax4.set_xlabel('Episode')
-    ax4.set_ylabel('Steps')
-    ax4.grid(True)
-    
-    plt.tight_layout()
-    
-    # Create timestamp and descriptive filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    success_rate = stats['success_rate'] * 100
-    filename = f'dql_training_meterics.png'
-    
-    # Save the plot with high quality
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
-    plt.show()
-    
-    return filename
+    return avg_stats
 
 if __name__ == "__main__":
-    # Create results directory
-    ensure_results_dir()
+    # Create results directory if it doesn't exist
+    if not os.path.exists('results'):
+        os.makedirs('results')
     
-    print("Running evaluation...")
-    test_results = evaluate_frozen_lake(episodes=100000)
-    
-    # Plot all metrics
-    print("\nGenerating plots...")
-    saved_file = plot_training_metrics(test_results)
-    print(f"Plots saved as '{saved_file}'")
+    # Run the evaluation
+    print("Starting DQL evaluation...")
+    stats = evaluate_frozen_lake(episodes=1000, num_runs=3)

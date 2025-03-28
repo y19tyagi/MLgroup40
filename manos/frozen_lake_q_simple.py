@@ -3,11 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 import pickle  # Add this import at the top
+from datetime import datetime
 
 class FrozenLakeAgent:
     def __init__(self):
         # Create environment - making it non-slippery for better learning
-        self.env = gym.make("FrozenLake-v1", map_name="8x8", is_slippery=False)
+        self.env = gym.make("FrozenLake-v1", map_name="8x8", is_slippery=True)
         
         # Initialize Q-table with slightly optimistic values
         self.q_table = np.ones((64, 4)) * 0.1  # Less optimistic initialization
@@ -206,15 +207,169 @@ class FrozenLakeAgent:
             return False
         return True
 
+    def plot_test_results(self, all_results):
+        """Plot the test results from all runs"""
+        plt.figure(figsize=(15, 10))
+        
+        # Plot 1: Win Rate Over Time (for each run)
+        plt.subplot(2, 2, 1)
+        colors = ['b', 'r', 'g']
+        for i, results in enumerate(all_results):
+            win_rates = np.cumsum(results['successes']) / np.arange(1, len(results['successes']) + 1) * 100
+            plt.plot(win_rates, f'{colors[i]}-', label=f'Run {i+1}')
+        plt.title('Win Rate Over Time')
+        plt.xlabel('Episodes')
+        plt.ylabel('Win Rate (%)')
+        plt.grid(True)
+        plt.legend()
+        
+        # Plot 2: Episode Rewards
+        plt.subplot(2, 2, 2)
+        for i, results in enumerate(all_results):
+            plt.plot(results['episode_rewards'], f'{colors[i]}-', label=f'Run {i+1}')
+        plt.title('Episode Rewards')
+        plt.xlabel('Episodes')
+        plt.ylabel('Reward')
+        plt.grid(True)
+        plt.legend()
+        
+        # Plot 3: Steps per Episode
+        plt.subplot(2, 2, 3)
+        for i, results in enumerate(all_results):
+            plt.plot(results['steps'], f'{colors[i]}-', label=f'Run {i+1}')
+        plt.title('Steps per Episode')
+        plt.xlabel('Episodes')
+        plt.ylabel('Steps')
+        plt.grid(True)
+        plt.legend()
+        
+        # Plot 4: Moving Average Win Rate
+        plt.subplot(2, 2, 4)
+        window = 100
+        for i, results in enumerate(all_results):
+            win_rates = np.array(results['successes']) * 100
+            moving_avg = np.convolve(win_rates, np.ones(window)/window, mode='valid')
+            plt.plot(moving_avg, f'{colors[i]}-', label=f'Run {i+1}')
+        plt.title(f'Moving Average Win Rate (window={window})')
+        plt.xlabel('Episodes')
+        plt.ylabel('Win Rate (%)')
+        plt.grid(True)
+        plt.legend()
+        
+        plt.tight_layout()
+        
+        # Save the plot with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'results/q_learning_test_results_{timestamp}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"\nTest results plot saved as '{filename}'")
+
+    def test(self, num_episodes=1000, num_runs=3):
+        """
+        Test the agent on the same map it was trained on, multiple times
+        Returns statistics about the test runs
+        """
+        all_results = []
+        
+        for run in range(num_runs):
+            print(f"\nStarting test run {run + 1}/{num_runs}...")
+            
+            # Create test environment with same settings as training
+            test_env = gym.make("FrozenLake-v1", map_name="8x8", is_slippery=True)
+            
+            results = {
+                'successes': [],
+                'steps': [],
+                'rewards': [],
+                'success_steps': [],
+                'fail_steps': [],
+                'episode_rewards': []
+            }
+            
+            for episode in range(num_episodes):
+                state = test_env.reset()[0]
+                done = False
+                steps = 0
+                total_reward = 0
+                
+                while not done:
+                    # Use greedy policy (no exploration during testing)
+                    action = np.argmax(self.q_table[state])
+                    state, reward, done, _, _ = test_env.step(action)
+                    steps += 1
+                    total_reward += reward
+                    
+                    if done:
+                        if reward == 1:
+                            results['success_steps'].append(steps)
+                        else:
+                            results['fail_steps'].append(steps)
+                        break
+                
+                # Record results
+                won = 1 if reward == 1 else 0
+                results['successes'].append(won)
+                results['steps'].append(steps)
+                results['rewards'].append(total_reward)
+                results['episode_rewards'].append(total_reward)
+                
+                # Print progress every 100 episodes
+                if (episode + 1) % 100 == 0:
+                    current_win_rate = np.mean(results['successes'][-100:]) * 100
+                    print(f"\nEpisodes {episode-99}-{episode+1}:")
+                    print(f"Win Rate: {current_win_rate:.1f}%")
+                    print(f"Average Steps: {np.mean(results['steps'][-100:]):.1f}")
+            
+            test_env.close()
+            all_results.append(results)
+            
+            # Print results for this run
+            stats = {
+                'success_rate': np.mean(results['successes']),
+                'avg_steps': np.mean(results['steps']),
+                'avg_reward': np.mean(results['rewards']),
+                'avg_success_steps': np.mean(results['success_steps']) if results['success_steps'] else 0,
+                'avg_fail_steps': np.mean(results['fail_steps']) if results['fail_steps'] else 0,
+                'episode_rewards': results['episode_rewards'],
+                'steps': results['steps'],
+                'successes': results['successes']
+            }
+            
+            print(f"\nTest Run {run + 1} Results:")
+            print(f"Win Rate: {stats['success_rate']*100:.1f}%")
+            print(f"Average Steps: {stats['avg_steps']:.1f}")
+            print(f"Successful Paths: {stats['avg_success_steps']:.1f} steps")
+            print(f"Failed Paths: {stats['avg_fail_steps']:.1f} steps")
+        
+        # Calculate averages across all runs
+        avg_stats = {
+            'success_rate': np.mean([np.mean(r['successes']) for r in all_results]),
+            'avg_steps': np.mean([np.mean(r['steps']) for r in all_results]),
+            'avg_reward': np.mean([np.mean(r['rewards']) for r in all_results]),
+            'avg_success_steps': np.mean([np.mean(r['success_steps']) if r['success_steps'] else 0 for r in all_results]),
+            'avg_fail_steps': np.mean([np.mean(r['fail_steps']) if r['fail_steps'] else 0 for r in all_results]),
+            'episode_rewards': [r['episode_rewards'] for r in all_results],
+            'steps': [r['steps'] for r in all_results],
+            'successes': [r['successes'] for r in all_results]
+        }
+        
+        print("\nOverall Test Results (Averaged across all runs):")
+        print(f"Win Rate: {avg_stats['success_rate']*100:.1f}%")
+        print(f"Average Steps: {avg_stats['avg_steps']:.1f}")
+        print(f"Successful Paths: {avg_stats['avg_success_steps']:.1f} steps")
+        print(f"Failed Paths: {avg_stats['avg_fail_steps']:.1f} steps")
+        
+        # Plot the results
+        self.plot_test_results(all_results)
+        
+        return avg_stats
+
 if __name__ == "__main__":
+    # Create agent and load the trained model
     agent = FrozenLakeAgent()
+    agent.load_model('frozen_lake_model.pkl')
     
-    # Train the model
-    agent.train(num_games=100000)
-    
-    # Save the trained model
-    agent.save_model()
-    
-    # To load and use the model later:
-    # new_agent = FrozenLakeAgent()
-    # new_agent.load_model() 
+    # Test the model
+    print("\nTesting the model...")
+    test_stats = agent.test(num_episodes=1000, num_runs=3) 
