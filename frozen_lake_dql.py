@@ -42,7 +42,7 @@ class FrozenLakeDQL():
     optimizer = None                # Optimizer initialized later
     ACTIONS = ['L','D','R','U']     # Action mapping for debugging
 
-    def __init__(self, learning_rate_a=0.001, discount_factor_g=0.95,
+    def __init__(self, learning_rate_a=0.01, discount_factor_g=0.95,
                  network_sync_rate=1000, replay_memory_size=10000, 
                  mini_batch_size=128):
  
@@ -53,9 +53,9 @@ class FrozenLakeDQL():
         self.mini_batch_size = mini_batch_size        # Training batch size
         self.policy_dqn = None                        # Main policy network
 
-    def train(self, episodes, render=False, is_slippery=False):
+    def train(self, episodes, render=False, is_slippery=True):
         print("Initializing training...")
-        num_states = 2  # Using normalized coordinates (row, col) instead of one-hot encoding
+        num_states = 4  # Changed from 2 to 4 to match the state representation
         num_actions = 4
 
         # Policy and target networks 
@@ -176,10 +176,9 @@ class FrozenLakeDQL():
             row_diff, col_diff]
         ], dtype=torch.float32)
 
-    def test(self, episodes, is_slippery=False):
-
+    def test(self, episodes, is_slippery=True):
         if self.policy_dqn is None:
-            self.policy_dqn = DQN(2, 16, 4)
+            self.policy_dqn = DQN(4, 16, 4)  # Changed from 2 to 4
             self.policy_dqn.load_state_dict(torch.load("frozen_lake_dql.pt"))
         self.policy_dqn.eval()  # Set to testing mode
         
@@ -204,5 +203,5 @@ class FrozenLakeDQL():
 
 if __name__ == '__main__':
     frozen_lake = FrozenLakeDQL()
-    frozen_lake.train(5000, is_slippery=False)  
-    frozen_lake.test(100, is_slippery=False)
+    frozen_lake.train(5000, is_slippery=True)  
+    frozen_lake.test(100, is_slippery=True)
