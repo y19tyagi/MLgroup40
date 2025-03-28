@@ -17,10 +17,11 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
     Tests our trained AI agent on new FrozenLake maps
     Returns performance statistics
     """
+    print("Loading model...")
     # Creating the brain with the same structure used in training
     ai_brain = DQN(in_states=4, h1_nodes=16, out_actions=4)
-    ai_brain.load_state_dict(torch.load(dqn_path))
-    ai_brain.eval()  # Put brain in evaluation mode
+    ai_brain.load_state_dict(torch.load(dqn_path, weights_only=True))
+    ai_brain.eval()
 
     results = {
         'successes': [],
@@ -37,10 +38,27 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
     epsilon_decay = 0.995
     min_epsilon = 0.01
 
+    # Pre-calculate state tensors for all possible positions
+    print("Pre-calculating state tensors...")
+    state_tensors = {}
+    for state in range(16):  # 4x4 grid
+        row = state // 4
+        col = state % 4
+        goal_row = 3
+        goal_col = 3
+        row_diff = (goal_row - row)/3
+        col_diff = (goal_col - col)/3
+        state_tensors[state] = torch.tensor([[row/3, col/3, row_diff, col_diff]], dtype=torch.float32)
+
+    # Generate all maps at once
+    print("Generating maps...")
+    maps = [generate_random_map(size=4) for _ in range(episodes)]
+
+    print("Starting evaluation...")
     for episode in range(episodes):
-        # Create new random map
+        # Create environment with pre-generated map
         game_world = gym.make('FrozenLake-v1', 
-                             desc=generate_random_map(size=4),
+                             desc=maps[episode],
                              is_slippery=is_slippery)
         current_position, _ = game_world.reset()
         game_over = False
@@ -48,18 +66,8 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         total_reward = 0
 
         while not game_over:
-            # Calculate state features
-            row = current_position // 4  # Map position to grid row
-            col = current_position % 4   # Map position to grid column
-            
-            # Calculate goal direction
-            goal_row = 3
-            goal_col = 3
-            row_diff = (goal_row - row)/3
-            col_diff = (goal_col - col)/3
-            
-            # Create state tensor with all 4 features
-            state_tensor = torch.tensor([[row/3, col/3, row_diff, col_diff]], dtype=torch.float32)
+            # Use pre-calculated state tensor
+            state_tensor = state_tensors[current_position]
 
             # Ask AI for action with exploration
             with torch.no_grad():
@@ -95,6 +103,14 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         
         game_world.close()
 
+        # Print progress every 1000 episodes
+        if (episode + 1) % 1000 == 0:
+            current_success_rate = np.mean(results['successes'][-1000:]) * 100
+            print(f"\nEpisodes {episode-999}-{episode+1}:")
+            print(f"Success Rate: {current_success_rate:.1f}%")
+            print(f"Average Steps: {np.mean(results['steps'][-1000:]):.1f}")
+            print(f"Exploration Rate: {epsilon:.3f}")
+
     stats = {
         'success_rate': np.mean(results['successes']),
         'avg_steps': np.mean(results['steps']),
@@ -107,7 +123,7 @@ def evaluate_frozen_lake(dqn_path="frozen_lake_dql.pt", episodes=100, is_slipper
         'successes': results['successes']
     }
 
-    print("\nTest Results:")
+    print("\nFinal Test Results:")
     print(f"Success Rate: {stats['success_rate']*100:.1f}%")
     print(f"Average Steps: {stats['avg_steps']:.1f}")
     print(f"Successful Paths: {stats['avg_success_steps']:.1f} steps")
@@ -152,11 +168,12 @@ def plot_training_metrics(stats):
     
     plt.tight_layout()
     
-    # Create timestamp for unique filename
+    # Create timestamp and descriptive filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f'results/dql_training_metrics_{timestamp}.png'
+    success_rate = stats['success_rate'] * 100
+    filename = f'dql_training_meterics.png'
     
-    # Save the plot
+    # Save the plot with high quality
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
     
@@ -167,7 +184,7 @@ if __name__ == "__main__":
     ensure_results_dir()
     
     print("Running evaluation...")
-    test_results = evaluate_frozen_lake(episodes=1000)
+    test_results = evaluate_frozen_lake(episodes=100000)
     
     # Plot all metrics
     print("\nGenerating plots...")
